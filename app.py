@@ -1,34 +1,48 @@
-import cv2
-import mediapipe as mp
+import tensorflow as tf
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.patches as patches
+from PIL import Image
+import time
 
-# Initialize MediaPipe Pose model
-mp_pose = mp.solutions.pose
-mp_drawing = mp.solutions.drawing_utils
-pose = mp_pose.Pose()
+# Load MoveNet model
+model = tf.saved_model.load('https://tfhub.dev/google/movenet/singlepose/lightning/4')
 
-# Open webcam
-cap = cv2.VideoCapture(0)
+def detect_pose(image):
+    # Convert image to tensor
+    image = tf.image.resize_with_pad(image, 192, 192)  # Resize image
+    image = tf.cast(image, dtype=tf.int32)  # Convert to integer
+    image = tf.expand_dims(image, axis=0)  # Add batch dimension
 
-while cap.isOpened():
-    ret, frame = cap.read()
-    if not ret:
-        break
+    # Run model
+    outputs = model.signatures["serving_default"](image)
+    keypoints = outputs['output_0'].numpy()[0, 0, :, :]
 
-    # Convert frame to RGB (required for MediaPipe)
-    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    return keypoints  # Return keypoints
 
-    # Process the frame for pose detection
-    results = pose.process(frame_rgb)
+def draw_pose(image_path, keypoints):
+    image = Image.open(image_path)
+    fig, ax = plt.subplots(figsize=(6, 6))
+    ax.imshow(image)
+    ax.axis("off")
 
-    # Draw keypoints on the frame
-    if results.pose_landmarks:
-        mp_drawing.draw_landmarks(frame, results.pose_landmarks, mp_pose.POSE_CONNECTIONS)
+    # Draw keypoints
+    for kp in keypoints:
+        x, y, confidence = kp
+        x *= image.width
+        y *= image.height
+        if confidence > 0.5:  # Draw only high-confidence keypoints
+            ax.add_patch(patches.Circle((x, y), radius=5, color='red'))
 
-    # Display output
-    cv2.imshow("Pose Estimation", frame)
+    plt.show()
 
-    if cv2.waitKey(1) & 0xFF == ord('q'):  # Press 'q' to exit
-        break
+# Load and process an image
+image_path = "person.jpg"  # Replace with the path to an input image
+image = Image.open(image_path)
+image_tensor = tf.convert_to_tensor(np.array(image))
 
-cap.release()
-cv2.destroyAllWindows()
+# Detect pose
+keypoints = detect_pose(image_tensor)
+
+# Draw the pose on the image
+draw_pose(image_path, keypoints)
