@@ -13,7 +13,6 @@ def detect_pose(image):
     image = tf.image.resize_with_pad(image, 192, 192)  # Resize image
     image = tf.cast(image, dtype=tf.int32)  # Convert to integer
     image = tf.expand_dims(image, axis=0)  # Add batch dimension
-
     # Run model
     outputs = model.signatures["serving_default"](image)
     keypoints = outputs['output_0'].numpy()[0, 0, :, :]
