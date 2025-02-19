@@ -1,0 +1,9 @@
+tensorflow
+numpy
+matplotlib
+pillow
+streamlit
+tensorflow-hub
+deeplake
+tensorflow-macos; platform_system == "Darwin"
+tensorflow-metal; platform_system == "Darwin"
