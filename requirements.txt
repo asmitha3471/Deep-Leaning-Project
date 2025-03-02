@@ -1,9 +1,12 @@
 tensorflow
 numpy
 matplotlib
+Line2D
 pillow
 streamlit
 tensorflow-hub
 deeplake
 tensorflow-macos; platform_system == "Darwin"
 tensorflow-metal; platform_system == "Darwin"
+cv2
+mediapipe

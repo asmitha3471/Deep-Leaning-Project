@@ -1,34 +1,34 @@
 import tensorflow as tf
-import tensorflow_hub as hub
 import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib.patches as patches
-from PIL import Image
+import cv2
 import streamlit as st
-import os
 import random
+import os
+import matplotlib.pyplot as plt
+from matplotlib.patches import Circle
+from matplotlib.lines import Line2D
 
-# Load MoveNet model
-model = hub.load("https://tfhub.dev/google/movenet/singlepose/lightning/4")
+# Load the TFLite model
+MODEL_PATH = "MoveNet.tflite"
 
-# Set local dataset path
-DATASET_PATH = "./images"  # Ensure correct path
+try:
+    interpreter = tf.lite.Interpreter(model_path=MODEL_PATH)
+    interpreter.allocate_tensors()
+except Exception as e:
+    st.error(f"Failed to load model: {e}")
+    st.stop()
 
-POSE_LABELS = {
-    "standing": "Standing",
-    "sitting": "Sitting",
-    "crouching": "Crouching",
-    "lying_down": "Lying Down",
-    "running": "Running",
-}
+# Path to the images folder
+DATASET_PATH = "./images"
 
 def load_random_image():
-    """Load a random image from the LSP dataset."""
-    if not os.path.exists(DATASET_PATH):  
-        st.error(f"Dataset not found at {DATASET_PATH}. Please check the path.")  
+    """Load a random image from the dataset folder."""
+    if not os.path.exists(DATASET_PATH):
+        st.error(f"Dataset folder not found at {DATASET_PATH}")
         return None
 
-    image_files = [f for f in os.listdir(DATASET_PATH) if f.endswith(".jpg")]
+    image_files = [f for f in os.listdir(DATASET_PATH) if f.endswith((".jpg", ".png"))]
+    
     if not image_files:
         st.error("No images found in dataset.")
         return None
@@ -36,149 +36,162 @@ def load_random_image():
     random_image = random.choice(image_files)
     image_path = os.path.join(DATASET_PATH, random_image)
 
-    image = Image.open(image_path)
-    return image
+    return image_path
 
-def preprocess_image(image):
-    """Preprocess an image for MoveNet."""
-    image = image.convert("RGB")  # Ensure 3 channels
-    img_width, img_height = image.size  # Get original image size
-    image_resized = image.resize((192, 192))  # Resize to MoveNet input size
-    image_array = np.array(image_resized).astype(np.int32)  # Convert to int32 (MoveNet requirement)
-    
-    image_tensor = tf.convert_to_tensor(image_array)
-    image_tensor = tf.expand_dims(image_tensor, axis=0)  # Add batch dimension
-    image_tensor = tf.cast(image_tensor, tf.int32)  # Ensure int32 format
-
-    return image_tensor, img_width, img_height
-
-def detect_pose(image_tensor):
+def detect_keypoints(image_path):
     """Detect pose keypoints from an image using MoveNet."""
-    outputs = model.signatures["serving_default"](image_tensor)
-    keypoints = outputs["output_0"].numpy()[0, 0, :, :]  # Shape: (17, 3)
-    return keypoints
-
-import numpy as np
-
-def calculate_angle(p1, p2, p3):
-    """Returns the angle (in degrees) between three points."""
-    v1 = np.array(p1) - np.array(p2)
-    v2 = np.array(p3) - np.array(p2)
-    angle = np.arccos(np.dot(v1, v2) / (np.linalg.norm(v1) * np.linalg.norm(v2)))
-    return np.degrees(angle)
-
-import numpy as np
-
-def calculate_angle(p1, p2, p3):
-    """Returns the angle (in degrees) between three points."""
-    v1 = np.array(p1) - np.array(p2)
-    v2 = np.array(p3) - np.array(p2)
-    angle = np.arccos(np.dot(v1, v2) / (np.linalg.norm(v1) * np.linalg.norm(v2)))
-    return np.degrees(angle)
-
-import numpy as np
-
-def calculate_angle(p1, p2, p3):
-    """Returns the angle (in degrees) between three points."""
-    v1 = np.array(p1) - np.array(p2)
-    v2 = np.array(p3) - np.array(p2)
-    angle = np.arccos(np.dot(v1, v2) / (np.linalg.norm(v1) * np.linalg.norm(v2)))
-    return np.degrees(angle)
-
-def classify_sport_pose(keypoints):
-    # Extract keypoints
-    head = keypoints[0]  
-    shoulders = (keypoints[5], keypoints[6])  
-    hips = (keypoints[11], keypoints[12])  
-    knees = (keypoints[13], keypoints[14])  
-    ankles = (keypoints[15], keypoints[16])  
+    image = cv2.imread(image_path)
     
-    # Calculate angles
-    torso_angle = calculate_angle(head, hips[0], ankles[0])  
-    knee_angle = calculate_angle(hips[0], knees[0], ankles[0])  
-    shoulder_angle = calculate_angle(shoulders[0], shoulders[1], hips[0])  
+    if image is None:
+        st.error(f"Failed to load image: {image_path}")
+        return None, None
 
-    # Ground detection (feet touching the ground)
-    feet_on_ground = ankles[0][1] > 0.9  # Adjust threshold if needed
+    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    original_height, original_width, _ = image.shape
 
-    ### **Sports Pose Classification**
+    # MoveNet model options (Thunder = 256x256, Lightning = 192x192)
+    INPUT_SIZE = 256  # Change to 192 if using Lightning
+
+    # Resize image
+    input_image = cv2.resize(image, (INPUT_SIZE, INPUT_SIZE))
+
+    # Normalize the image to uint8 (0-255 range)
+    input_image = np.array(input_image, dtype=np.uint8)  # Ensure uint8 format
     
-    # 🏃 **Running / Sprinting**
-    if torso_angle > 70 and knee_angle < 160 and not feet_on_ground:
-        return "Running / Sprinting"
+    # Add a batch dimension
+    input_tensor = np.expand_dims(input_image, axis=0)
 
-    # 🏀 **Jumping / Dunking**
-    if not feet_on_ground and knee_angle > 140:
-        return "Jumping / Dunking"
+    # Get input and output tensor indexes
+    input_tensor_index = interpreter.get_input_details()[0]['index']
+    output_tensor_index = interpreter.get_output_details()[0]['index']
 
-    # ⚽ **Kicking**
-    if abs(knees[0][0] - ankles[0][0]) > 50 and knee_angle < 90:
-        return "Kicking"
+    # Run inference
+    interpreter.set_tensor(input_tensor_index, input_tensor)
+    interpreter.invoke()
 
-    # 🤿 **Diving**
-    if torso_angle < 30 and not feet_on_ground:
-        return "Diving"
+    # Get the keypoints
+    keypoints = interpreter.get_tensor(output_tensor_index)[0][0]  # Shape: (17, 3)
 
-    # 🤸 **Flipping / Tumbling**
-    if not feet_on_ground and knee_angle < 90:
-        return "Flipping / Tumbling"
+    # Extract confidence scores
+    confidences = keypoints[:, 2]
 
-    # ⚾ **Throwing / Pitching**
-    if abs(shoulders[0][0] - shoulders[1][0]) > 50 and abs(shoulders[0][1] - shoulders[1][1]) > 30:
-        return "Throwing / Pitching"
+    # Lowered Confidence Threshold (from 0.3 → 0.1)
+    CONFIDENCE_THRESHOLD = 0.1
 
-    # 🚴 **Cycling**
-    if knee_angle < 120 and feet_on_ground and torso_angle > 45:
-        return "Cycling"
+    # Check if all keypoints have very low confidence
+    if np.all(confidences < CONFIDENCE_THRESHOLD):
+        st.warning("⚠ No pose detected with sufficient confidence. Try another image.")
+        return image, None
 
-    # 🏋️ **Weightlifting**
-    if torso_angle > 80 and abs(shoulders[0][1] - shoulders[1][1]) < 20:
-        return "Weightlifting"
+    # Scale keypoints back to original image size
+    keypoints[:, 0] = np.clip((keypoints[:, 0] * original_width).astype(int), 0, original_width - 1)
+    keypoints[:, 1] = np.clip((keypoints[:, 1] * original_height).astype(int), 0, original_height - 1)
 
-    # 🥅 **Goalkeeping**
-    if abs(shoulders[0][1] - shoulders[1][1]) > 50 and abs(hips[0][1] - hips[1][1]) > 30:
-        return "Goalkeeping"
+    return image, keypoints
 
-    return "Unknown Pose"
+def calculate_pose_details(keypoints):
+    """Calculate pose details based on keypoints."""
+    # Filter keypoints with high confidence
+    confident_keypoints = [keypoint for keypoint in keypoints if keypoint[2] > 0.1]
 
+    # Number of detected keypoints with sufficient confidence
+    num_confident_keypoints = len(confident_keypoints)
 
-def draw_pose(image, keypoints, img_width, img_height):
-    """Draw detected pose keypoints on the image."""
+    # Average confidence of the detected keypoints
+    average_confidence = np.mean([keypoint[2] for keypoint in confident_keypoints]) if confident_keypoints else 0
+
+    # Extract keypoints for shoulders, hips, and knees
+    left_shoulder = keypoints[5]
+    right_shoulder = keypoints[6]
+    left_hip = keypoints[11]
+    right_hip = keypoints[12]
+    left_knee = keypoints[13]
+    right_knee = keypoints[14]
+
+    # Refined criteria for pose type detection
+    is_standing = False
+    is_sitting = False
+
+    # Standing Pose Criteria
+    if abs(left_shoulder[1] - right_shoulder[1]) < 30 and abs(left_hip[1] - right_hip[1]) < 30:
+        # Knees should be lower than hips for standing
+        if left_knee[1] > left_hip[1] and right_knee[1] > right_hip[1]:
+            is_standing = True
+
+    # Sitting Pose Criteria (example, adjust as necessary)
+    if left_knee[1] <= left_hip[1] and right_knee[1] <= right_hip[1]:
+        is_sitting = True
+
+    # Default to "Unknown" if neither criteria is met
+    if is_standing:
+        pose_type = "Standing"
+    elif is_sitting:
+        pose_type = "Sitting"
+    else:
+        pose_type = "Unknown"
+
+    return num_confident_keypoints, average_confidence, pose_type
+
+def draw_pose(image, keypoints):
+    """Draw keypoints and skeleton on the image."""
     fig, ax = plt.subplots(figsize=(6, 6))
     ax.imshow(image)
     ax.axis("off")
 
-    # Scale keypoints to original image size
-    for kp in keypoints:
-        x, y, confidence = kp
-        x *= img_width  # Scale x-coordinate
-        y *= img_height  # Scale y-coordinate
-        if confidence > 0.1:  # Adjust confidence threshold if needed
-            ax.add_patch(patches.Circle((x, y), radius=5, color="red"))
+    # Define keypoint connections (skeleton)
+    connections = [
+        (0, 1), (0, 2), (1, 3), (2, 4),  # Head and eyes
+        (5, 6), (5, 7), (6, 8),  # Shoulders to elbows
+        (7, 9), (8, 10),  # Elbows to wrists
+        (5, 11), (6, 12), (11, 12),  # Shoulders to hips
+        (11, 13), (13, 15), (12, 14), (14, 16)  # Legs
+    ]
 
-    return fig  # Return the plotted figure
+    # Keypoint labels (optional, for reference)
+    keypoint_names = [
+        "Nose", "Left Eye", "Right Eye", "Left Ear", "Right Ear",
+        "Left Shoulder", "Right Shoulder", "Left Elbow", "Right Elbow",
+        "Left Wrist", "Right Wrist", "Left Hip", "Right Hip",
+        "Left Knee", "Right Knee", "Left Ankle", "Right Ankle"
+    ]
+
+    # Draw connections (lines between keypoints)
+    for i, j in connections:
+        if keypoints[i, 2] > 0.1 and keypoints[j, 2] > 0.1:  # Only draw lines if both keypoints have confidence > 0.1
+            ax.add_line(Line2D([keypoints[i, 0], keypoints[j, 0]],
+                               [keypoints[i, 1], keypoints[j, 1]], linewidth=3, color="cyan"))
+
+    # Draw keypoints
+    for i, (x, y, confidence) in enumerate(keypoints):
+        if confidence > 0.1:  # Lowered threshold to 0.1
+            ax.add_patch(Circle((x, y), radius=5, color="red", fill=True))
+            ax.text(x + 5, y - 10, keypoint_names[i], fontsize=7, color="white",
+                    bbox=dict(facecolor='black', alpha=0.5, edgecolor='none', boxstyle='round,pad=0.3'))
+
+    return fig
 
 # Streamlit UI
-st.title("MoveNet Pose Estimation with LSP Dataset")
-st.write("Loading a random image from the LSP dataset and detecting keypoints.")
+st.title("MoveNet Pose Estimation")
+st.write("Loading a random image and detecting keypoints.")
 
-image = load_random_image()
+image_path = load_random_image()
 
-if image:
-    st.image(image, caption="LSP Dataset Image", use_container_width=True)
+if image_path:
+    st.image(image_path, caption="Input Image", use_container_width=True)
 
-    image_tensor, img_width, img_height = preprocess_image(image)  # Preprocess image before passing to the model
+    image, keypoints_pred = detect_keypoints(image_path)
 
-    # Detect pose keypoints
-    keypoints_pred = detect_pose(image_tensor)
-
-    # Display results
-    st.write("### Predicted Keypoints:")
-    if np.all(keypoints_pred[:, 2] < 0.1):  # If confidence is too low for all keypoints
-        st.write("No pose detected.")
+    if image is None:
+        st.write("❌ Error in image processing.")
+    elif keypoints_pred is None:
+        st.write("⚠ No pose detected.")
     else:
-        st.pyplot(draw_pose(image, keypoints_pred, img_width, img_height))
+        st.pyplot(draw_pose(image, keypoints_pred))
 
-        # Classify Pose
-        predicted_pose = classify_sport_pose(keypoints_pred)
-        st.write(f"### Pose Detected: {predicted_pose}")
+        # Calculate and display pose details
+        num_confident_keypoints, average_confidence, pose_type = calculate_pose_details(keypoints_pred)
+
+        st.subheader("Pose Details:")
+        st.write(f"Number of detected keypoints with sufficient confidence: {num_confident_keypoints}")
+        st.write(f"Average confidence of detected keypoints: {average_confidence:.2f}")
+        st.write(f"Pose Type: {pose_type}")
