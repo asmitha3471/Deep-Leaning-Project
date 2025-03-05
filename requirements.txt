@@ -8,5 +8,6 @@ tensorflow-hub
 deeplake
 tensorflow-macos; platform_system == "Darwin"
 tensorflow-metal; platform_system == "Darwin"
-cv2
+opencv-python
 mediapipe
+kagglehub
